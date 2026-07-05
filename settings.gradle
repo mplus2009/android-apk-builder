@@ -11,17 +11,11 @@ dependencyResolutionManagement {
         google()
         mavenCentral()
     }
-}
-
-rootProject.name = "SampleApp"
-include ':app'dependencyResolutionManagement {
-    repositories {
-        google()
-        mavenCentral()
-    }
     versionCatalogs {
         create("libs") {
             from(files("gradle/libs.versions.toml"))
         }
     }
 }
+rootProject.name = "SampleApp"
+include(":app")
