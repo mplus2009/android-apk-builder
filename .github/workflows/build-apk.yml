@@ -21,65 +21,78 @@ jobs:
         java-version: '17'
         distribution: 'temurin'
     
-    - name: Configurar Gradle
+    - name: Setup Gradle
       uses: gradle/actions/setup-gradle@v3
       with:
-        gradle-version: '8.5'
+        gradle-version: '8.6'
     
     - name: Dar permisos a gradlew
       run: chmod +x gradlew
     
-    - name: Verificar requisitos de la app
+    - name: Verificar archivos del proyecto
       run: |
-        echo "📱 Verificando configuración de Android..."
-        if [ ! -f "app/build.gradle" ] && [ ! -f "app/build.gradle.kts" ]; then
-          echo "❌ No se encontró app/build.gradle"
-          exit 1
-        fi
-        echo "✅ Archivos de proyecto encontrados"
-        ./gradlew dependencies --dry-run || echo "⚠️ Advertencia: No se pudieron verificar dependencias"
+        echo "📁 Estructura del proyecto:"
+        ls -la
+        echo ""
+        echo "📄 Verificando archivos necesarios:"
+        test -f settings.gradle && echo "✅ settings.gradle" || echo "❌ settings.gradle"
+        test -f gradle/libs.versions.toml && echo "✅ libs.versions.toml" || echo "❌ libs.versions.toml"
+        test -f app/build.gradle.kts && echo "✅ app/build.gradle.kts" || echo "❌ app/build.gradle.kts"
+        test -f app/google-services.json && echo "✅ google-services.json" || echo "⚠️ google-services.json (no requerido para debug)"
     
-    - name: Descargar dependencias
+    - name: Crear debug.keystore para firma
       run: |
-        echo "📦 Descargando dependencias del proyecto..."
-        ./gradlew build --no-daemon --parallel --dry-run
-        ./gradlew resolveDependencies --no-daemon || echo "✅ Dependencias listas"
+        echo "🔑 Generando debug.keystore..."
+        keytool -genkey -v -keystore debug.keystore -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 \
+          -storepass android -keypass android \
+          -dname "CN=Android Debug, O=Android, C=US"
+        mv debug.keystore ${{ github.workspace }}/
     
-    - name: Compilar APK (Debug)
+    - name: Limpiar y compilar
       run: |
-        echo "🔨 Compilando APK en modo debug..."
+        echo "🧹 Limpiando proyecto..."
+        ./gradlew clean --no-daemon --stacktrace || echo "⚠️ Clean falló"
+        
+        echo "📦 Descargando dependencias..."
+        ./gradlew build --no-daemon --parallel --stacktrace || echo "⚠️ Build parcial"
+        
+        echo "🔨 Compilando APK Debug..."
         ./gradlew assembleDebug --no-daemon --stacktrace
     
-    - name: Compilar APK (Release)
+    - name: Compilar APK Release
       if: github.ref == 'refs/heads/main'
       run: |
-        echo "🔨 Compilando APK en modo release..."
+        echo "🔨 Compilando APK Release..."
         ./gradlew assembleRelease --no-daemon --stacktrace
       env:
-        SIGNING_KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
-        SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
-        SIGNING_STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
+        KEYSTORE_PATH: ${{ github.workspace }}/debug.keystore
+        STORE_PASSWORD: android
+        KEY_PASSWORD: android
     
     - name: Verificar APKs generados
       run: |
-        echo "🔍 Verificando APKs generados..."
+        echo "🔍 Buscando APKs generados..."
         if [ -d "app/build/outputs/apk" ]; then
           echo "✅ APKs encontrados:"
           find app/build/outputs/apk -name "*.apk" -exec ls -lh {} \;
-          find app/build/outputs/apk -name "*.apk" -exec file {} \;
+          echo ""
+          echo "📊 Tamaño de los APKs:"
+          find app/build/outputs/apk -name "*.apk" -exec du -h {} \;
         else
           echo "❌ No se encontraron APKs"
+          echo "Contenido de app/build:"
+          find app/build -type f -name "*.apk" || echo "No hay APKs"
           exit 1
         fi
     
-    - name: Subir APK Debug como artifact
+    - name: Subir APK Debug
       uses: actions/upload-artifact@v4
       with:
         name: app-debug-apk
         path: app/build/outputs/apk/debug/*.apk
         retention-days: 30
     
-    - name: Subir APK Release como artifact
+    - name: Subir APK Release
       if: github.ref == 'refs/heads/main'
       uses: actions/upload-artifact@v4
       with:
@@ -87,7 +100,7 @@ jobs:
         path: app/build/outputs/apk/release/*.apk
         retention-days: 30
     
-    - name: Crear release con APK
+    - name: Crear Release
       if: github.ref == 'refs/heads/main' && github.event_name == 'push'
       uses: softprops/action-gh-release@v1
       with:
